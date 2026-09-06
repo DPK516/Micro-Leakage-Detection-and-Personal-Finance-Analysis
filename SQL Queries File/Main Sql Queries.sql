@@ -1,4 +1,4 @@
-Select * from personal_spending
+SELECT * FROM personal_spending;
 
 -- 1. What is the total amount spent each month in 2023?
 SELECT year, month, SUM(value) AS total_monthly_spend
@@ -30,7 +30,7 @@ WHERE is_micro_spend = 1
 GROUP BY payment_mode
 ORDER BY micro_spend_count DESC;
 
--- 5.Compare average expense value for recurring vs non-recurring transactions.
+-- 5. Compare average expense value for recurring vs non-recurring transactions.
 SELECT is_recurring, AVG(value) AS avg_spend
 FROM personal_spending
 WHERE type = 'Expense'
@@ -42,7 +42,7 @@ FROM personal_spending
 GROUP BY day_of_week
 ORDER BY avg_spend DESC;
 
---7. Which three time blocks see the most leakage-prone transactions?
+-- 7. Which three time blocks see the most leakage-prone transactions?
 SELECT time_block, COUNT(*) AS leakage_count
 FROM personal_spending
 WHERE is_leakage = 1
@@ -52,16 +52,16 @@ LIMIT 3;
 
 -- 8. Which contexts contribute most to high leakage scores 
 --    (above 75th percentile)?
-WITH threshold AS (
-    SELECT PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY leakage_score) 
-	AS cutoff FROM personal_spending
-),
-high_leaks AS (
-    SELECT * FROM personal_spending, threshold
-    WHERE leakage_score > threshold.cutoff
+-- MySQL does not have PERCENTILE_CONT, so we use NTILE to approximate the top 25%
+WITH ranked_scores AS (
+    SELECT 
+        context,
+        NTILE(4) OVER (ORDER BY leakage_score ASC) AS quartile
+    FROM personal_spending
 )
 SELECT context, COUNT(*) AS high_leak_count
-FROM high_leaks
+FROM ranked_scores
+WHERE quartile = 4
 GROUP BY context
 ORDER BY high_leak_count DESC;
 
@@ -79,9 +79,10 @@ ORDER BY month;
 
 -- 10. Find users’ top 3 non-essential categories 
 --     that most frequently appear in salary weeks.
+-- Changed TRUE to 1
 SELECT category, COUNT(*) AS count
 FROM personal_spending
-WHERE is_salary_week = TRUE AND Is_Necessary = 'No'
+WHERE is_salary_week = 1 AND Is_Necessary = 'No'
 GROUP BY category
 ORDER BY count DESC
 LIMIT 3;
@@ -92,8 +93,7 @@ FROM personal_spending
 GROUP BY payment_mode
 ORDER BY avg_leakage_score DESC;
 
-
--- 12.Identify Top Leakage Contexts by Month with Running Rank
+-- 12. Identify Top Leakage Contexts by Month with Running Rank
 WITH monthly_leakage AS (
   SELECT
     month,
@@ -118,14 +118,15 @@ SELECT *
 FROM ranked_leaks
 WHERE leakage_rank <= 3
 ORDER BY month, leakage_rank
-LIMIT 18 -- for just first 6 months;
+LIMIT 18; -- for just first 6 months
 
--- 13.Flag months where leakage significantly jumps right after salary arrives.
+-- 13. Flag months where leakage significantly jumps right after salary arrives.
+-- Replaced FILTER (WHERE...) with a CASE statement for MySQL compatibility
 WITH monthly_stats AS (
   SELECT
     month,
     is_salary_week,
-    SUM(value) FILTER (WHERE is_leakage = 1) AS total_leakage
+    SUM(CASE WHEN is_leakage = 1 THEN value ELSE 0 END) AS total_leakage
   FROM personal_spending
   GROUP BY month, is_salary_week
 ),
@@ -135,7 +136,7 @@ leak_jump AS (
     total_leakage,
     LAG(total_leakage) OVER (ORDER BY month) AS prev_leakage
   FROM monthly_stats
-  WHERE is_salary_week = TRUE
+  WHERE is_salary_week = 1
 )
 SELECT
   month,
@@ -146,7 +147,7 @@ FROM leak_jump
 WHERE prev_leakage IS NOT NULL
   AND total_leakage > prev_leakage;
 
---14. Find which payment channels have highest leakage rate per transaction.
+-- 14. Find which payment channels have highest leakage rate per transaction.
 WITH mode_counts AS (
   SELECT
     payment_mode,
@@ -166,4 +167,3 @@ mode_rate AS (
 SELECT *
 FROM mode_rate
 ORDER BY leakage_rate_pct DESC;
-
